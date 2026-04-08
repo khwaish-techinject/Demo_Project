@@ -40,6 +40,7 @@ export async function createMessage(req: Request) {
   const chatId = body.chatId ?? body.chat_id ?? body.chat;
   const userId = body.userId ?? body.user_id ?? body.user;
   const content = body.content;
+  const role = body.role === "assistant" ? "assistant" : "user";
 
   if (!chatId || !userId || !content) {
     return badRequest("chatId, userId and content are required.");
@@ -50,6 +51,7 @@ export async function createMessage(req: Request) {
     .values({
       chatId,
       userId,
+      role,
       content,
     })
     .returning();
@@ -95,12 +97,14 @@ export async function createMessageRecord(params: {
   chatId: string;
   userId: string;
   content: string;
+  role?: "assistant" | "user";
 }) {
   const [message] = await db
     .insert(messages)
     .values({
       chatId: params.chatId,
       userId: params.userId,
+      role: params.role ?? "user",
       content: params.content,
     })
     .returning();
