@@ -1,0 +1,128 @@
+import { and, desc, eq } from "drizzle-orm";
+
+import { db } from "../db/db";
+import { chats } from "../db/schema";
+
+function badRequest(message: string) {
+  return Response.json({ error: message }, { status: 400 });
+}
+
+export async function listChats(req: Request) {
+  const url = new URL(req.url);
+  const createdBy = url.searchParams.get("createdBy");
+
+  const rows = createdBy
+    ? await db
+        .select()
+        .from(chats)
+        .where(eq(chats.createdBy, createdBy))
+        .orderBy(desc(chats.updatedAt))
+    : await db.select().from(chats).orderBy(desc(chats.updatedAt));
+
+  return Response.json(rows);
+}
+
+export async function getChatById(chatId: string) {
+  const [chat] = await db.select().from(chats).where(eq(chats.id, chatId));
+
+  if (!chat) {
+    return Response.json({ error: "Chat not found." }, { status: 404 });
+  }
+
+  return Response.json(chat);
+}
+
+export async function createChat(req: Request) {
+  const body = await req.json();
+  const createdBy = body.createdBy ?? body.created_by;
+  const title = body.title ?? "New Chat";
+
+  if (!createdBy) {
+    return badRequest("createdBy is required.");
+  }
+
+  const [chat] = await db
+    .insert(chats)
+    .values({
+      createdBy,
+      title,
+    })
+    .returning();
+
+  return Response.json(chat, { status: 201 });
+}
+
+export async function updateChat(chatId: string, req: Request) {
+  const body = await req.json();
+  const nextTitle = body.title;
+
+  if (!nextTitle) {
+    return badRequest("title is required.");
+  }
+
+  const [chat] = await db
+    .update(chats)
+    .set({
+      title: nextTitle,
+      updatedAt: new Date(),
+    })
+    .where(eq(chats.id, chatId))
+    .returning();
+
+  if (!chat) {
+    return Response.json({ error: "Chat not found." }, { status: 404 });
+  }
+
+  return Response.json(chat);
+}
+
+export async function deleteChat(chatId: string) {
+  const [chat] = await db
+    .delete(chats)
+    .where(eq(chats.id, chatId))
+    .returning();
+
+  if (!chat) {
+    return Response.json({ error: "Chat not found." }, { status: 404 });
+  }
+
+  return Response.json({ success: true, chat });
+}
+
+export async function ensureChat(params: {
+  chatId?: string | null;
+  createdBy: string;
+  title?: string;
+}) {
+  const normalizedChatId = params.chatId?.trim();
+
+  if (normalizedChatId) {
+    const [existingChat] = await db
+      .select()
+      .from(chats)
+      .where(and(eq(chats.id, normalizedChatId), eq(chats.createdBy, params.createdBy)));
+
+    if (existingChat) {
+      return existingChat;
+    }
+  }
+
+  const [chat] = await db
+    .insert(chats)
+    .values({
+      createdBy: params.createdBy,
+      title: params.title?.trim() || "New Chat",
+    })
+    .returning();
+
+  return chat;
+}
+
+export async function touchChat(chatId: string) {
+  await db
+    .update(chats)
+    .set({
+      updatedAt: new Date(),
+    })
+    .where(eq(chats.id, chatId));
+}
