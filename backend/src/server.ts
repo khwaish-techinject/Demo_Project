@@ -351,4 +351,5 @@ const server = Bun.serve({
   },
 });
 
-console.log(`Server running on http://localhost:${server.port}/`);
+//console.log(`Server running on http://localhost:${server.port}/`);
+console.log(`Server running on http://localhost:${server.port}/id/`);
