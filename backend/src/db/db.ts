@@ -59,4 +59,31 @@ export async function ensureDatabaseSchema() {
       created_at timestamp NOT NULL DEFAULT now()
     );
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS customers (
+      id integer PRIMARY KEY,
+      name text NOT NULL,
+      email text UNIQUE,
+      city text
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS products (
+      id integer PRIMARY KEY,
+      name text NOT NULL,
+      price integer NOT NULL
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sales (
+      id integer PRIMARY KEY,
+      product text NOT NULL,
+      customer_id integer NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+      amount integer NOT NULL,
+      month text NOT NULL
+    );
+  `);
 }

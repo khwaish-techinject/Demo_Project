@@ -40,6 +40,29 @@ export const attachments = pgTable("attachments", {
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
 });
 
+export const customers = pgTable("customers", {
+  id: integer("id").primaryKey(),
+  name: text("name").notNull(),
+  email: text("email").unique(),
+  city: text("city"),
+});
+
+export const products = pgTable("products", {
+  id: integer("id").primaryKey(),
+  name: text("name").notNull(),
+  price: integer("price").notNull(),
+});
+
+export const sales = pgTable("sales", {
+  id: integer("id").primaryKey(),
+  product: text("product").notNull(),
+  customerId: integer("customer_id")
+    .notNull()
+    .references(() => customers.id, { onDelete: "cascade" }),
+  amount: integer("amount").notNull(),
+  month: text("month").notNull(),
+});
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Chat = typeof chats.$inferSelect;
@@ -48,3 +71,9 @@ export type Message = typeof messages.$inferSelect;
 export type NewMessage = typeof messages.$inferInsert;
 export type Attachment = typeof attachments.$inferSelect;
 export type NewAttachment = typeof attachments.$inferInsert;
+export type Customer = typeof customers.$inferSelect;
+export type NewCustomer = typeof customers.$inferInsert;
+export type Product = typeof products.$inferSelect;
+export type NewProduct = typeof products.$inferInsert;
+export type Sale = typeof sales.$inferSelect;
+export type NewSale = typeof sales.$inferInsert;

@@ -1,10 +1,17 @@
 {
+  "scripts": {
+    "dev": "bun run backend/src/server.ts",
+    "mcp": "bun run backend/src/mcp/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.1",
     "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",
-    "pg": "^8.20.0"
+    "pg": "^8.20.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
