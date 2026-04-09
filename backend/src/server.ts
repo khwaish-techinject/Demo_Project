@@ -71,6 +71,7 @@ type ChatEvent =
       chatId: string;
       messageId: string;
       userId: string;
+      message: string;
       content: string;
       attachments: WsAttachmentInput[];
       timestamp: string;
@@ -155,6 +156,18 @@ async function handleWebSocketMessage(
   await touchChat(chat.id);
 
   sendEvent(ws, {
+    type: "chat_message",
+    role: "user",
+    chatId: chat.id,
+    messageId: userMessage.id,
+    userId: user.id,
+    message: userMessage.content,
+    content: userMessage.content,
+    attachments: payload.attachments ?? [],
+    timestamp: userMessage.createdAt.toISOString(),
+  });
+
+  sendEvent(ws, {
     type: "chat_context",
     chatId: chat.id,
     userId: user.id,
@@ -179,6 +192,7 @@ async function handleWebSocketMessage(
     chatId: chat.id,
     messageId: assistantMessage.id,
     userId: assistantUser.id,
+    message: assistantMessage.content,
     content: assistantMessage.content,
     attachments: [],
     timestamp: assistantMessage.createdAt.toISOString(),
