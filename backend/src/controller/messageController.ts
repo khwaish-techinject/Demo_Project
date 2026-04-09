@@ -7,9 +7,19 @@ function badRequest(message: string) {
   return Response.json({ error: message }, { status: 400 });
 }
 
+function normalizeOptionalQueryValue(value: string | null) {
+  const normalized = value?.trim();
+
+  if (!normalized || normalized === "undefined" || normalized === "null") {
+    return undefined;
+  }
+
+  return normalized;
+}
+
 export async function listMessages(req: Request) {
   const url = new URL(req.url);
-  const chatId = url.searchParams.get("chatId");
+  const chatId = normalizeOptionalQueryValue(url.searchParams.get("chatId"));
 
   const rows = chatId
     ? await db
