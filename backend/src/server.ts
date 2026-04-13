@@ -45,12 +45,18 @@ type WsAttachmentInput = {
 type IncomingChatPayload = {
   type?: string;
   userId?: string;
+  user_id?: string;
   userName?: string;
+  user_name?: string;
   chatId?: string;
+  chat_id?: string;
   title?: string;
   message?: string;
   content?: string;
+  text?: string;
+  prompt?: string;
   attachments?: WsAttachmentInput[];
+  data?: Partial<IncomingChatPayload>;
 };
 
 type ChatEvent =
@@ -92,6 +98,67 @@ function now() {
   return new Date().toISOString();
 }
 
+function normalizeOptionalText(value: unknown) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+
+  if (!normalized || normalized === "undefined" || normalized === "null") {
+    return undefined;
+  }
+
+  return normalized;
+}
+
+function normalizeOptionalUuid(value: unknown) {
+  const normalized = normalizeOptionalText(value);
+
+  if (!normalized) {
+    return undefined;
+  }
+
+  const uuidPattern =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+  return uuidPattern.test(normalized) ? normalized : undefined;
+}
+
+function firstDefinedText(...values: unknown[]) {
+  for (const value of values) {
+    const normalized = normalizeOptionalText(value);
+
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeAttachments(value: unknown): WsAttachmentInput[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => {
+      const file = item as Partial<WsAttachmentInput>;
+      const name = normalizeOptionalText(file.name);
+      const url = normalizeOptionalText(file.url);
+      const type = normalizeOptionalText(file.type);
+      const size = Number(file.size);
+
+      if (!name || !url || !type || !Number.isFinite(size)) {
+        return undefined;
+      }
+
+      return { name, url, type, size };
+    })
+    .filter((file): file is WsAttachmentInput => Boolean(file));
+}
+
 function buildAssistantReply() {
   return "hello khwaish";
 }
@@ -123,7 +190,16 @@ async function handleWebSocketMessage(
   rawMessage: string
 ) {
   const payload = parseIncomingMessage(rawMessage);
-  const content = payload.content?.trim() || payload.message?.trim();
+  const content = firstDefinedText(
+    payload.content,
+    payload.message,
+    payload.text,
+    payload.prompt,
+    payload.data?.content,
+    payload.data?.message,
+    payload.data?.text,
+    payload.data?.prompt
+  );
 
   if (!content) {
     sendEvent(ws, {
@@ -134,15 +210,34 @@ async function handleWebSocketMessage(
     return;
   }
 
+  const userId = normalizeOptionalUuid(
+    payload.userId ?? payload.user_id ?? payload.data?.userId ?? payload.data?.user_id
+  );
+  const userName =
+    firstDefinedText(
+      payload.userName,
+      payload.user_name,
+      payload.data?.userName,
+      payload.data?.user_name
+    ) || "Guest";
+  const chatId = normalizeOptionalUuid(
+    payload.chatId ?? payload.chat_id ?? payload.data?.chatId ?? payload.data?.chat_id
+  );
+  const title =
+    firstDefinedText(payload.title, payload.data?.title) || content.slice(0, 60);
+  const normalizedAttachments = normalizeAttachments(
+    payload.attachments ?? payload.data?.attachments
+  );
+
   const user = await findOrCreateUser({
-    id: payload.userId,
-    name: payload.userName || "Guest",
+    id: userId,
+    name: userName,
   });
 
   const chat = await ensureChat({
-    chatId: payload.chatId,
+    chatId,
     createdBy: user.id,
-    title: payload.title || content.slice(0, 60),
+    title,
   });
 
   const userMessage = await createMessageRecord({
@@ -151,7 +246,7 @@ async function handleWebSocketMessage(
     content,
   });
 
-  await createAttachmentsForMessage(userMessage.id, payload.attachments);
+  await createAttachmentsForMessage(userMessage.id, normalizedAttachments);
 
   await touchChat(chat.id);
 
@@ -163,7 +258,7 @@ async function handleWebSocketMessage(
     userId: user.id,
     message: userMessage.content,
     content: userMessage.content,
-    attachments: payload.attachments ?? [],
+    attachments: normalizedAttachments,
     timestamp: userMessage.createdAt.toISOString(),
   });
 

@@ -7,6 +7,29 @@ function badRequest(message: string) {
   return Response.json({ error: message }, { status: 400 });
 }
 
+function normalizeOptionalText(value: string | null | undefined) {
+  const normalized = value?.trim();
+
+  if (!normalized || normalized === "undefined" || normalized === "null") {
+    return undefined;
+  }
+
+  return normalized;
+}
+
+function normalizeOptionalUuid(value: string | null | undefined) {
+  const normalized = normalizeOptionalText(value);
+
+  if (!normalized) {
+    return undefined;
+  }
+
+  const uuidPattern =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+  return uuidPattern.test(normalized) ? normalized : undefined;
+}
+
 export async function listUsers() {
   const rows = await db.select().from(users).orderBy(asc(users.createdAt));
   return Response.json(rows);
@@ -72,8 +95,8 @@ export async function findOrCreateUser(params: {
   id?: string | null;
   name?: string | null;
 }) {
-  const normalizedName = params.name?.trim();
-  const normalizedId = params.id?.trim();
+  const normalizedName = normalizeOptionalText(params.name);
+  const normalizedId = normalizeOptionalUuid(params.id);
 
   if (normalizedId) {
     const [existingById] = await db

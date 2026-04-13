@@ -7,6 +7,29 @@ function badRequest(message: string) {
   return Response.json({ error: message }, { status: 400 });
 }
 
+function normalizeOptionalText(value: string | null | undefined) {
+  const normalized = value?.trim();
+
+  if (!normalized || normalized === "undefined" || normalized === "null") {
+    return undefined;
+  }
+
+  return normalized;
+}
+
+function normalizeOptionalUuid(value: string | null | undefined) {
+  const normalized = normalizeOptionalText(value);
+
+  if (!normalized) {
+    return undefined;
+  }
+
+  const uuidPattern =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+  return uuidPattern.test(normalized) ? normalized : undefined;
+}
+
 export async function listChats(req: Request) {
   const url = new URL(req.url);
   const createdBy = url.searchParams.get("createdBy");
@@ -94,7 +117,7 @@ export async function ensureChat(params: {
   createdBy: string;
   title?: string;
 }) {
-  const normalizedChatId = params.chatId?.trim();
+  const normalizedChatId = normalizeOptionalUuid(params.chatId);
 
   if (normalizedChatId) {
     const [existingChat] = await db
