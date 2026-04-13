@@ -42,6 +42,13 @@ type WsAttachmentInput = {
   size: number;
 };
 
+type WsData = {
+  connectionId: string;
+  connectedAt: string;
+  ip?: string;
+  userAgent?: string;
+};
+
 type IncomingChatPayload = {
   type?: string;
   userId?: string;
@@ -96,6 +103,17 @@ function sendEvent(ws: ServerWebSocket<unknown>, event: ChatEvent) {
 
 function now() {
   return new Date().toISOString();
+}
+
+function getWsMeta(ws: ServerWebSocket<unknown>) {
+  const data = ws.data as Partial<WsData> | undefined;
+
+  return {
+    connectionId: data?.connectionId ?? "unknown",
+    connectedAt: data?.connectedAt ?? "unknown",
+    ip: data?.ip ?? "unknown",
+    userAgent: data?.userAgent ?? "unknown",
+  };
 }
 
 function normalizeOptionalText(value: unknown) {
@@ -296,16 +314,27 @@ async function handleWebSocketMessage(
 
 await ensureDatabaseSchema();
 
-const server = Bun.serve({
+const server = Bun.serve<WsData>({
   hostname: "0.0.0.0",
-  port: 3000,
+  port: Number(process.env.PORT) || 3000,
 
   async fetch(req, server) {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
     if (pathname === "/ws") {
-      const success = server.upgrade(req);
+      const forwardedFor = req.headers.get("x-forwarded-for");
+      const ip = forwardedFor?.split(",")[0]?.trim() || undefined;
+      const userAgent = req.headers.get("user-agent") || undefined;
+
+      const success = server.upgrade(req, {
+        data: {
+          connectionId: crypto.randomUUID(),
+          connectedAt: now(),
+          ip,
+          userAgent,
+        } satisfies WsData,
+      });
 
       if (success) {
         return;
@@ -430,7 +459,10 @@ const server = Bun.serve({
 
   websocket: {
     open(ws) {
-      console.log("Client connected");
+      const meta = getWsMeta(ws);
+      console.log(
+        `[WS OPEN] id=${meta.connectionId} ip=${meta.ip} connectedAt=${meta.connectedAt}`
+      );
 
       sendEvent(ws, {
         type: "connection_status",
@@ -442,10 +474,17 @@ const server = Bun.serve({
     async message(ws, message) {
       try {
         const rawMessage = message.toString().trim();
-        console.log("User:", rawMessage);
+        const meta = getWsMeta(ws);
+        console.log(
+          `[WS MESSAGE] id=${meta.connectionId} size=${rawMessage.length} payload=${rawMessage}`
+        );
         await handleWebSocketMessage(ws, rawMessage);
       } catch (error) {
-        console.error("WebSocket message error:", error);
+        const meta = getWsMeta(ws);
+        console.error(
+          `[WS ERROR] id=${meta.connectionId} message handling failed:`,
+          error
+        );
         sendEvent(ws, {
           type: "error",
           message: "Failed to process the message.",
@@ -454,8 +493,13 @@ const server = Bun.serve({
       }
     },
 
-    close() {
-      console.log("Client disconnected");
+    close(ws, code, reason) {
+      const meta = getWsMeta(ws);
+      const normalizedReason =
+        typeof reason === "string" && reason.length ? reason : "no reason provided";
+      console.log(
+        `[WS CLOSE] id=${meta.connectionId} code=${code} reason=${normalizedReason}`
+      );
     },
   },
 });
