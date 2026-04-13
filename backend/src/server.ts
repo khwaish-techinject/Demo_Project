@@ -479,7 +479,8 @@ const server = Bun.serve<WsData>({
           `[WS MESSAGE] id=${meta.connectionId} size=${rawMessage.length} payload=${rawMessage}`
         );
         await handleWebSocketMessage(ws, rawMessage);
-      } catch (error) {
+      } 
+      catch (error) {
         const meta = getWsMeta(ws);
         console.error(
           `[WS ERROR] id=${meta.connectionId} message handling failed:`,
