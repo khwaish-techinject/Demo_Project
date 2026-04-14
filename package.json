@@ -2,6 +2,7 @@
   "scripts": {
     "dev": "bun run backend/src/server.ts",
     "mcp": "bun run backend/src/mcp/server.ts",
+    "start": "bun run backend/src/server.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
