@@ -34,6 +34,7 @@ import {
   updateUser,
 } from "./controller/userController";
 import { ensureDatabaseSchema } from "./db/db";
+import { generateAssistantReply } from "./services/api/llmservices";
 
 type WsAttachmentInput = {
   name: string;
@@ -177,9 +178,10 @@ function normalizeAttachments(value: unknown): WsAttachmentInput[] {
     .filter((file): file is WsAttachmentInput => Boolean(file));
 }
 
-function buildAssistantReply() {
-  return "hello khwaish";
+function buildAssistantReply(userMessage: string) {
+  return "hello Khwaish";
 }
+// removed buildAssistantReply
 
 function jsonResponse(data: unknown, init?: ResponseInit) {
   return Response.json(data, init);
@@ -291,25 +293,72 @@ async function handleWebSocketMessage(
     name: ASSISTANT_USER_NAME,
   });
 
+  //const assistantMessageContent = await generateAssistantReply(content);
+  const raw = await generateAssistantReply(content);
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  }
+  catch {
+    parsed = null;
+  }
+  //const assistantMessageContent = buildAssistantReply(content);
+
+  // const assistantMessage = await createMessageRecord({
+  //   chatId: chat.id,
+  //   userId: assistantUser.id,
+  //   content: assistantMessageContent,
+  // });
+  let assistantText = raw;
+
+  if (parsed?.type === "query_result") {
+    assistantText = parsed.text;
+  }
+
+  // save correct message in DB
   const assistantMessage = await createMessageRecord({
     chatId: chat.id,
     userId: assistantUser.id,
-    content: buildAssistantReply(),
+    content: assistantText,
   });
-
   await touchChat(chat.id);
 
+  // sendEvent(ws, {
+  //   type: "chat_message",
+  //   role: "assistant",
+  //   chatId: chat.id,
+  //   messageId: assistantMessage.id,
+  //   userId: assistantUser.id,
+  //   message: assistantMessage.content,
+  //   content: assistantMessage.content,
+  //   attachments: [],
+  //   timestamp: assistantMessage.createdAt.toISOString(),
+  // });
   sendEvent(ws, {
     type: "chat_message",
     role: "assistant",
     chatId: chat.id,
     messageId: assistantMessage.id,
     userId: assistantUser.id,
-    message: assistantMessage.content,
-    content: assistantMessage.content,
+    message: assistantText,
+    content: assistantText,
     attachments: [],
     timestamp: assistantMessage.createdAt.toISOString(),
   });
+
+  if (parsed?.type === "query_result") {
+  ws.send(JSON.stringify({
+    type: "query_data",
+    chatId: chat.id,
+    userId: assistantUser.id,
+    data: parsed.data
+}));
+  // ws.send(JSON.stringify({
+  //   type: "query_data",
+  //   data: parsed.data
+  // }));
+}
 }
 
 await ensureDatabaseSchema();
