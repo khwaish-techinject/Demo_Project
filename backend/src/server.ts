@@ -91,12 +91,23 @@ type ChatEvent =
       timestamp: string;
     }
   | {
+      type: "message";
+      chatId: string;
+      message: {
+        content: string;
+        timestamp: string;
+        senderId?: string;
+      };
+    }
+  | {
       type: "error";
       message: string;
       timestamp: string;
     };
 
 const ASSISTANT_USER_NAME = "DataPilot AI";
+const chatRooms = new Map<string, Set<ServerWebSocket<unknown>>>();
+const socketRooms = new Map<ServerWebSocket<unknown>, Set<string>>();
 
 function sendEvent(ws: ServerWebSocket<unknown>, event: ChatEvent) {
   ws.send(JSON.stringify(event));
@@ -156,6 +167,67 @@ function firstDefinedText(...values: unknown[]) {
   return undefined;
 }
 
+function addSocketToRoom(ws: ServerWebSocket<unknown>, chatId: string) {
+  let room = chatRooms.get(chatId);
+  if (!room) {
+    room = new Set<ServerWebSocket<unknown>>();
+    chatRooms.set(chatId, room);
+  }
+  room.add(ws);
+
+  let roomsForSocket = socketRooms.get(ws);
+  if (!roomsForSocket) {
+    roomsForSocket = new Set<string>();
+    socketRooms.set(ws, roomsForSocket);
+  }
+  roomsForSocket.add(chatId);
+}
+
+function removeSocketFromAllRooms(ws: ServerWebSocket<unknown>) {
+  const roomsForSocket = socketRooms.get(ws);
+  if (!roomsForSocket) {
+    return 0;
+  }
+
+  const joinedChatIds = Array.from(roomsForSocket);
+
+  for (const chatId of joinedChatIds) {
+    const room = chatRooms.get(chatId);
+    if (!room) {
+      continue;
+    }
+
+    room.delete(ws);
+    if (room.size === 0) {
+      chatRooms.delete(chatId);
+    }
+  }
+
+  socketRooms.delete(ws);
+  return joinedChatIds.length;
+}
+
+function isSocketInRoom(ws: ServerWebSocket<unknown>, chatId: string) {
+  return chatRooms.get(chatId)?.has(ws) ?? false;
+}
+
+function broadcastToRoom(chatId: string, event: ChatEvent) {
+  const room = chatRooms.get(chatId);
+  if (!room || room.size === 0) {
+    return 0;
+  }
+
+  const serializedEvent = JSON.stringify(event);
+  let recipients = 0;
+
+  for (const client of room) {
+    client.send(serializedEvent);
+    recipients += 1;
+  }
+
+  return recipients;
+}
+
 function normalizeAttachments(value: unknown): WsAttachmentInput[] {
   if (!Array.isArray(value)) {
     return [];
@@ -210,6 +282,145 @@ async function handleWebSocketMessage(
   rawMessage: string
 ) {
   const payload = parseIncomingMessage(rawMessage);
+  const payloadType = firstDefinedText(payload.type, payload.data?.type);
+
+  if (payloadType === "join") {
+    const chatId = firstDefinedText(
+      payload.chatId,
+      payload.chat_id,
+      payload.data?.chatId,
+      payload.data?.chat_id
+    );
+
+    if (!chatId) {
+      sendEvent(ws, {
+        type: "error",
+        message: "chatId is required for join.",
+        timestamp: now(),
+      });
+      return;
+    }
+
+    addSocketToRoom(ws, chatId);
+    const meta = getWsMeta(ws);
+    console.log(`[WS JOIN] id=${meta.connectionId} chatId=${chatId}`);
+    return;
+  }
+
+  if (payloadType === "message") {
+    const chatId = firstDefinedText(
+      payload.chatId,
+      payload.chat_id,
+      payload.data?.chatId,
+      payload.data?.chat_id
+    );
+    const content = firstDefinedText(
+      payload.content,
+      payload.message,
+      payload.text,
+      payload.prompt,
+      payload.data?.content,
+      payload.data?.message,
+      payload.data?.text,
+      payload.data?.prompt
+    );
+
+    if (!chatId) {
+      sendEvent(ws, {
+        type: "error",
+        message: "chatId is required for message.",
+        timestamp: now(),
+      });
+      return;
+    }
+
+    if (!content) {
+      sendEvent(ws, {
+        type: "error",
+        message: "content is required for message.",
+        timestamp: now(),
+      });
+      return;
+    }
+
+    if (!isSocketInRoom(ws, chatId)) {
+      sendEvent(ws, {
+        type: "error",
+        message: "Socket must join the chat room before sending messages.",
+        timestamp: now(),
+      });
+      return;
+    }
+
+    let timestamp = now();
+    let senderId: string | undefined;
+
+    try {
+      const userId = normalizeOptionalUuid(
+        payload.userId ??
+          payload.user_id ??
+          payload.data?.userId ??
+          payload.data?.user_id
+      );
+      const userName =
+        firstDefinedText(
+          payload.userName,
+          payload.user_name,
+          payload.data?.userName,
+          payload.data?.user_name
+        ) || "Guest";
+      const title =
+        firstDefinedText(payload.title, payload.data?.title) || content.slice(0, 60);
+      const chatIdForDb = normalizeOptionalUuid(chatId);
+
+      if (chatIdForDb) {
+        const user = await findOrCreateUser({
+          id: userId,
+          name: userName,
+        });
+        const chat = await ensureChat({
+          chatId: chatIdForDb,
+          createdBy: user.id,
+          title,
+        });
+        const storedMessage = await createMessageRecord({
+          chatId: chat.id,
+          userId: user.id,
+          content,
+        });
+
+        await touchChat(chat.id);
+        senderId = user.id;
+        timestamp = storedMessage.createdAt.toISOString();
+      } else {
+        senderId = userId;
+      }
+    } catch (error) {
+      const meta = getWsMeta(ws);
+      console.error(
+        `[WS MESSAGE SAVE ERROR] id=${meta.connectionId} chatId=${chatId}:`,
+        error
+      );
+    }
+
+    const event: ChatEvent = {
+      type: "message",
+      chatId,
+      message: {
+        content,
+        timestamp,
+        ...(senderId ? { senderId } : {}),
+      },
+    };
+
+    const recipients = broadcastToRoom(chatId, event);
+    const meta = getWsMeta(ws);
+    console.log(
+      `[WS BROADCAST] id=${meta.connectionId} chatId=${chatId} recipients=${recipients}`
+    );
+    return;
+  }
+
   const content = firstDefinedText(
     payload.content,
     payload.message,
@@ -544,11 +755,12 @@ const server = Bun.serve<WsData>({
     },
 
     close(ws, code, reason) {
+      const removedRooms = removeSocketFromAllRooms(ws);
       const meta = getWsMeta(ws);
       const normalizedReason =
         typeof reason === "string" && reason.length ? reason : "no reason provided";
       console.log(
-        `[WS CLOSE] id=${meta.connectionId} code=${code} reason=${normalizedReason}`
+        `[WS CLOSE] id=${meta.connectionId} code=${code} reason=${normalizedReason} roomsRemoved=${removedRooms}`
       );
     },
   },
