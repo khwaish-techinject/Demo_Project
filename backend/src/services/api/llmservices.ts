@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 // import OpenAI from "openai";
 // import { pool } from "../../db/db";
 // import { getDatabaseSchemaText } from "../../mcp/schema";
@@ -129,6 +130,7 @@
 //     return "I encountered an error while trying to process your request.";
 //   }
 // }
+
 import OpenAI from "openai";
 import { pool } from "../../db/db";
 import { getDatabaseSchemaText } from "../../mcp/schema";
@@ -209,6 +211,7 @@ ${schemaText}
     }
 
     console.log("LLM Raw Response:", JSON.stringify(message, null, 2));
+
 
     // TOOL CALL HANDLING
     if (message.tool_calls && message.tool_calls.length > 0) {
