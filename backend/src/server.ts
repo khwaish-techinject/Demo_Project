@@ -100,6 +100,10 @@ type ChatEvent =
       };
     }
   | {
+    type: "joined";
+    chatId: string;
+  }
+  | {
       type: "error";
       message: string;
       timestamp: string;
@@ -211,6 +215,10 @@ function isSocketInRoom(ws: ServerWebSocket<unknown>, chatId: string) {
   return chatRooms.get(chatId)?.has(ws) ?? false;
 }
 
+function getRoomSize(chatId: string) {
+  return chatRooms.get(chatId)?.size ?? 0;
+}
+
 function broadcastToRoom(chatId: string, event: ChatEvent) {
   const room = chatRooms.get(chatId);
   if (!room || room.size === 0) {
@@ -220,9 +228,24 @@ function broadcastToRoom(chatId: string, event: ChatEvent) {
   const serializedEvent = JSON.stringify(event);
   let recipients = 0;
 
-  for (const client of room) {
-    client.send(serializedEvent);
-    recipients += 1;
+  for (const client of Array.from(room)) {
+    try {
+      // Bun ServerWebSocket.readyState follows WebSocket constants; 1 means OPEN.
+      if ((client as { readyState?: number }).readyState !== 1) {
+        removeSocketFromAllRooms(client);
+        continue;
+      }
+
+      const bytes = client.send(serializedEvent);
+      if (typeof bytes === "number" && bytes <= 0) {
+        removeSocketFromAllRooms(client);
+        continue;
+      }
+
+      recipients += 1;
+    } catch {
+      removeSocketFromAllRooms(client);
+    }
   }
 
   return recipients;
@@ -283,31 +306,64 @@ async function handleWebSocketMessage(
 ) {
   const payload = parseIncomingMessage(rawMessage);
   const payloadType = firstDefinedText(payload.type, payload.data?.type);
-
   if (payloadType === "join") {
-    const chatId = firstDefinedText(
-      payload.chatId,
-      payload.chat_id,
-      payload.data?.chatId,
-      payload.data?.chat_id
-    );
+  const chatId = firstDefinedText(
+    payload.chatId,
+    payload.chat_id,
+    payload.data?.chatId,
+    payload.data?.chat_id
+  );
 
-    if (!chatId) {
-      sendEvent(ws, {
-        type: "error",
-        message: "chatId is required for join.",
-        timestamp: now(),
-      });
-      return;
-    }
-
-    addSocketToRoom(ws, chatId);
-    const meta = getWsMeta(ws);
-    console.log(`[WS JOIN] id=${meta.connectionId} chatId=${chatId}`);
+  if (!chatId) {
+    sendEvent(ws, {
+      type: "error",
+      message: "chatId is required for join.",
+      timestamp: now(),
+    });
     return;
   }
 
-  if (payloadType === "message") {
+  addSocketToRoom(ws, chatId);
+
+  const meta = getWsMeta(ws);
+  console.log(
+    `[WS JOIN] id=${meta.connectionId} chatId=${chatId} roomSize=${getRoomSize(chatId)}`
+  );
+
+  //  FIX: confirm join (important for frontend sync)
+  sendEvent(ws, {
+    type: "joined",
+    chatId,
+  });
+
+  return;
+}
+  // if (payloadType === "join") {
+  //   const chatId = firstDefinedText(
+  //     payload.chatId,
+  //     payload.chat_id,
+  //     payload.data?.chatId,
+  //     payload.data?.chat_id
+  //   );
+
+  //   if (!chatId) {
+  //     sendEvent(ws, {
+  //       type: "error",
+  //       message: "chatId is required for join.",
+  //       timestamp: now(),
+  //     });
+  //     return;
+  //   }
+
+  //   addSocketToRoom(ws, chatId);
+  //   const meta = getWsMeta(ws);
+  //   console.log(
+  //     `[WS JOIN] id=${meta.connectionId} chatId=${chatId} roomSize=${getRoomSize(chatId)}`
+  //   );
+  //   return;
+  // }
+
+  if (payloadType === "chat_message" || payloadType === "message") {
     const chatId = firstDefinedText(
       payload.chatId,
       payload.chat_id,
@@ -342,18 +398,34 @@ async function handleWebSocketMessage(
       });
       return;
     }
-
+    // ✅ AUTO JOIN FIX (handles missed join + race condition)
     if (!isSocketInRoom(ws, chatId)) {
-      sendEvent(ws, {
-        type: "error",
-        message: "Socket must join the chat room before sending messages.",
-        timestamp: now(),
-      });
-      return;
-    }
+      addSocketToRoom(ws, chatId);
+
+      const meta = getWsMeta(ws);
+      console.log(
+    `[AUTO JOIN] id=${meta.connectionId} chatId=${chatId} roomSize=${getRoomSize(chatId)}`
+  );
+}
+    //  AUTO JOIN FIX (critical)
+    // if (!isSocketInRoom(ws, chatId)) {
+    //   addSocketToRoom(ws, chatId);
+
+    //   const meta = getWsMeta(ws);
+    //   console.log(`[AUTO JOIN] id=${meta.connectionId} chatId=${chatId} roomSize=${getRoomSize(chatId)}`);
+    // }
+    // if (!isSocketInRoom(ws, chatId)) {
+    //   sendEvent(ws, {
+    //     type: "error",
+    //     message: "Socket must join the chat room before sending messages.",
+    //     timestamp: now(),
+    //   });
+    //   return;
+    // }
 
     let timestamp = now();
     let senderId: string | undefined;
+    let messageId = crypto.randomUUID();
 
     try {
       const userId = normalizeOptionalUuid(
@@ -391,6 +463,7 @@ async function handleWebSocketMessage(
 
         await touchChat(chat.id);
         senderId = user.id;
+        messageId = storedMessage.id as `${string}-${string}-${string}-${string}-${string}`;
         timestamp = storedMessage.createdAt.toISOString();
       } else {
         senderId = userId;
@@ -404,19 +477,25 @@ async function handleWebSocketMessage(
     }
 
     const event: ChatEvent = {
-      type: "message",
+      type: "chat_message",
+      role: "user",
       chatId,
-      message: {
-        content,
-        timestamp,
-        ...(senderId ? { senderId } : {}),
-      },
+      messageId,
+      userId: (senderId ??
+        crypto.randomUUID()) as `${string}-${string}-${string}-${string}-${string}`,
+      message: content,
+      content,
+      attachments: [],
+      timestamp,
     };
-
+    // ✅ ensure socket is definitely in room before broadcast
+    if (!isSocketInRoom(ws, chatId)) {
+      addSocketToRoom(ws, chatId);
+    }
     const recipients = broadcastToRoom(chatId, event);
     const meta = getWsMeta(ws);
     console.log(
-      `[WS BROADCAST] id=${meta.connectionId} chatId=${chatId} recipients=${recipients}`
+      `[WS BROADCAST] id=${meta.connectionId} chatId=${chatId} recipients=${recipients} roomSize=${getRoomSize(chatId)}`
     );
     return;
   }
@@ -471,6 +550,11 @@ async function handleWebSocketMessage(
     title,
   });
 
+  // Ensure the current connection is subscribed to this chat room before broadcasts.
+  if (!isSocketInRoom(ws, chat.id)) {
+    addSocketToRoom(ws, chat.id);
+  }
+
   const userMessage = await createMessageRecord({
     chatId: chat.id,
     userId: user.id,
@@ -481,7 +565,7 @@ async function handleWebSocketMessage(
 
   await touchChat(chat.id);
 
-  sendEvent(ws, {
+  const userMessageEvent: ChatEvent = {
     type: "chat_message",
     role: "user",
     chatId: chat.id,
@@ -491,7 +575,8 @@ async function handleWebSocketMessage(
     content: userMessage.content,
     attachments: normalizedAttachments,
     timestamp: userMessage.createdAt.toISOString(),
-  });
+  };
+  broadcastToRoom(chat.id, userMessageEvent);
 
   sendEvent(ws, {
     type: "chat_context",
@@ -546,7 +631,7 @@ async function handleWebSocketMessage(
   //   attachments: [],
   //   timestamp: assistantMessage.createdAt.toISOString(),
   // });
-  sendEvent(ws, {
+  const assistantMessageEvent: ChatEvent = {
     type: "chat_message",
     role: "assistant",
     chatId: chat.id,
@@ -556,7 +641,8 @@ async function handleWebSocketMessage(
     content: assistantText,
     attachments: [],
     timestamp: assistantMessage.createdAt.toISOString(),
-  });
+  };
+  broadcastToRoom(chat.id, assistantMessageEvent);
 
   if (parsed?.type === "query_result") {
   ws.send(JSON.stringify({
