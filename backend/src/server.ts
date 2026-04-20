@@ -2,38 +2,18 @@
 import type { ServerWebSocket } from "bun";
 
 import {
-  createAttachment,
-  createAttachmentsForMessage,
-  deleteAttachment,
-  getAttachmentById,
-  listAttachments,
-  updateAttachment,
+  createAttachment,  createAttachmentsForMessage,  deleteAttachment,  getAttachmentById,  listAttachments,  updateAttachment,
 } from "./controller/attachmentController";
-import {
-  createChat,
-  deleteChat,
-  ensureChat,
-  getChatById,
-  listChats,
-  touchChat,
-  updateChat,
+
+import {  createChat,  deleteChat,  ensureChat,  getChatById,  listChats,  touchChat,  updateChat,
 } from "./controller/chatController";
-import {
-  createMessage,
-  createMessageRecord,
-  deleteMessage,
-  getMessageById,
-  listMessages,
-  updateMessage,
+
+import {  createMessage,  createMessageRecord,  deleteMessage,  getMessageById,  listMessages,  updateMessage,
 } from "./controller/messageController";
-import {
-  createUser,
-  deleteUser,
-  findOrCreateUser,
-  getUserById,
-  listUsers,
-  updateUser,
+
+import {  createUser,  deleteUser,  findOrCreateUser,  getUserById,  listUsers,  updateUser,
 } from "./controller/userController";
+
 import { ensureDatabaseSchema } from "./db/db";
 import { generateAssistantReply } from "./services/api/llmservices";
 
@@ -111,6 +91,7 @@ type ChatEvent =
     };
 
 const ASSISTANT_USER_NAME = "DataPilot AI";
+
 const chatRooms = new Map<string, Set<ServerWebSocket<unknown>>>();
 const socketRooms = new Map<ServerWebSocket<unknown>, Set<string>>();
 
@@ -124,7 +105,6 @@ function now() {
 
 function getWsMeta(ws: ServerWebSocket<unknown>) {
   const data = ws.data as Partial<WsData> | undefined;
-
   return {
     connectionId: data?.connectionId ?? "unknown",
     connectedAt: data?.connectedAt ?? "unknown",
@@ -137,26 +117,20 @@ function normalizeOptionalText(value: unknown) {
   if (typeof value !== "string") {
     return undefined;
   }
-
   const normalized = value.trim();
-
   if (!normalized || normalized === "undefined" || normalized === "null") {
     return undefined;
   }
-
   return normalized;
 }
 
 function normalizeOptionalUuid(value: unknown) {
   const normalized = normalizeOptionalText(value);
-
   if (!normalized) {
     return undefined;
   }
-
   const uuidPattern =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
   return uuidPattern.test(normalized) ? normalized : undefined;
 }
 
