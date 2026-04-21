@@ -91,6 +91,9 @@ type ChatEvent =
     };
 
 const ASSISTANT_USER_NAME = "DataPilot AI";
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN ?? "http://localhost:3000";
+const CHAT_CORS_METHODS = "GET, OPTIONS";
+const CHAT_CORS_HEADERS = "Content-Type, Authorization";
 
 const chatRooms = new Map<string, Set<ServerWebSocket<unknown>>>();
 const socketRooms = new Map<ServerWebSocket<unknown>, Set<string>>();
@@ -273,6 +276,26 @@ function parseIncomingMessage(rawMessage: string): IncomingChatPayload {
       attachments: [],
     };
   }
+}
+
+function isChatApiPath(pathname: string) {
+  return pathname === "/api/chats" || pathname.startsWith("/api/chats/");
+}
+
+function isAllowedFrontendOrigin(origin: string | null) {
+  return origin === FRONTEND_ORIGIN;
+}
+
+function addChatCorsHeaders(response: Response, origin: string | null) {
+  if (!isAllowedFrontendOrigin(origin)) {
+    return response;
+  }
+
+  response.headers.set("Access-Control-Allow-Origin", origin!);
+  response.headers.set("Access-Control-Allow-Methods", CHAT_CORS_METHODS);
+  response.headers.set("Access-Control-Allow-Headers", CHAT_CORS_HEADERS);
+  response.headers.set("Vary", "Origin");
+  return response;
 }
 //--------------------------------------------------------------------------------------------------------------------------------------------------
 // async function handleWebSocketMessage(
@@ -640,7 +663,7 @@ async function handleWebSocketMessage(
   const payload = parseIncomingMessage(rawMessage);
   const payloadType = firstDefinedText(payload.type, payload.data?.type);
 
-  // ================= JOIN =================
+  // JOIN 
   if (payloadType === "join") {
     const chatId = firstDefinedText(
       payload.chatId,
@@ -668,7 +691,7 @@ async function handleWebSocketMessage(
     return;
   }
 
-  // ================= SINGLE MESSAGE PIPELINE =================
+  // SINGLE MESSAGE PIPELINE 
   const content = firstDefinedText(
     payload.content,
     payload.message,
@@ -730,12 +753,12 @@ async function handleWebSocketMessage(
     title,
   });
 
-  // ✅ ensure room join
+  //  ensure room join
   if (!isSocketInRoom(ws, chat.id)) {
     addSocketToRoom(ws, chat.id);
   }
 
-  // ================= USER MESSAGE =================
+  // USER MESSAGE 
   const userMessage = await createMessageRecord({
     chatId: chat.id,
     userId: user.id,
@@ -757,7 +780,7 @@ async function handleWebSocketMessage(
     timestamp: userMessage.createdAt.toISOString(),
   });
 
-  // ================= CONTEXT =================
+  // CONTEXT 
   sendEvent(ws, {
     type: "chat_context",
     chatId: chat.id,
@@ -765,7 +788,7 @@ async function handleWebSocketMessage(
     title: chat.title,
   });
 
-  // ================= AI =================
+  // AI 
   const assistantUser = await findOrCreateUser({
     name: ASSISTANT_USER_NAME,
   });
@@ -790,7 +813,7 @@ async function handleWebSocketMessage(
     assistantText = raw;
   }
 
-  // ================= SAVE AI =================
+  //  SAVE AI
   const assistantMessage = await createMessageRecord({
     chatId: chat.id,
     userId: assistantUser.id,
@@ -812,16 +835,16 @@ async function handleWebSocketMessage(
   });
 
   // ================= OPTIONAL SQL DATA =================
-  if (parsed?.type === "query_result") {
-    ws.send(
-      JSON.stringify({
-        type: "query_data",
-        chatId: chat.id,
-        userId: assistantUser.id,
-        data: parsed.data,
-      })
-    );
-  }
+  // if (parsed?.type === "query_result") {
+  //   ws.send(
+  //     JSON.stringify({
+  //       type: "query_data",
+  //       chatId: chat.id,
+  //       userId: assistantUser.id,
+  //       data: parsed.data,
+  //     })
+  //   );
+  // }
 }
 
 await ensureDatabaseSchema();
@@ -829,10 +852,12 @@ await ensureDatabaseSchema();
 const server = Bun.serve<WsData>({
   hostname: "0.0.0.0",
   port: Number(process.env.PORT) || 10000,
+  idleTimeout: 60, 
 
   async fetch(req, server) {
     const url = new URL(req.url);
     const pathname = url.pathname;
+    const requestOrigin = req.headers.get("origin");
 
     if (pathname === "/ws") {
       const forwardedFor = req.headers.get("x-forwarded-for");
@@ -895,27 +920,41 @@ const server = Bun.serve<WsData>({
     }
 
     if (req.method === "GET" && pathname === "/api/chats") {
-      return listChats(req);
+      const response = await listChats(req);
+      return addChatCorsHeaders(response, requestOrigin);
     }
 
     if (req.method === "POST" && pathname === "/api/chats") {
-      return createChat(req);
+      const response = await createChat(req);
+      return addChatCorsHeaders(response, requestOrigin);
     }
 
     if (pathname.startsWith("/api/chats/")) {
       const chatId = getIdFromPath(pathname);
 
       if (req.method === "GET") {
-        return getChatById(chatId);
+        const response = await getChatById(chatId);
+        return addChatCorsHeaders(response, requestOrigin);
       }
 
       if (req.method === "PATCH" || req.method === "PUT") {
-        return updateChat(chatId, req);
+        const response = await updateChat(chatId, req);
+        return addChatCorsHeaders(response, requestOrigin);
       }
 
       if (req.method === "DELETE") {
-        return deleteChat(chatId);
+        const response = await deleteChat(chatId);
+        return addChatCorsHeaders(response, requestOrigin);
       }
+    }
+
+    if (req.method === "OPTIONS" && isChatApiPath(pathname)) {
+      if (!isAllowedFrontendOrigin(requestOrigin)) {
+        return new Response(null, { status: 403 });
+      }
+
+      const response = new Response(null, { status: 204 });
+      return addChatCorsHeaders(response, requestOrigin);
     }
 
     if (req.method === "GET" && pathname === "/api/messages") {
