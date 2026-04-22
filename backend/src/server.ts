@@ -122,7 +122,7 @@ function now() {
 }
 
 function getWsMeta(ws: ServerWebSocket<unknown>) {
-  const data = ws.data as Partial<WsData> | undefined;
+  const data = (ws.data as Partial<WsData> | null) ?? {};
   return {
     connectionId: data?.connectionId ?? "unknown",
     connectedAt: data?.connectedAt ?? "unknown",
@@ -133,11 +133,11 @@ function getWsMeta(ws: ServerWebSocket<unknown>) {
 
 function normalizeOptionalText(value: unknown) {
   if (typeof value !== "string") {
-    return undefined;
+    return;
   }
   const normalized = value.trim();
   if (!normalized || normalized === "undefined" || normalized === "null") {
-    return undefined;
+    return;
   }
   return normalized;
 }
@@ -145,11 +145,15 @@ function normalizeOptionalText(value: unknown) {
 function normalizeOptionalUuid(value: unknown) {
   const normalized = normalizeOptionalText(value);
   if (!normalized) {
-    return undefined;
+    return;
   }
   const uuidPattern =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  return uuidPattern.test(normalized) ? normalized : undefined;
+  if (uuidPattern.test(normalized)) {
+    return normalized;
+  }
+
+  return;
 }
 
 function firstDefinedText(...values: unknown[]) {
@@ -161,7 +165,7 @@ function firstDefinedText(...values: unknown[]) {
     }
   }
 
-  return undefined;
+  return;
 }
 
 function addSocketToRoom(ws: ServerWebSocket<unknown>, chatId: string) {
@@ -258,7 +262,7 @@ function normalizeAttachments(value: unknown): WsAttachmentInput[] {
       const size = Number(file.size);
 
       if (!name || !url || !type || !Number.isFinite(size)) {
-        return undefined;
+        return;
       }
 
       return { name, url, type, size };
@@ -845,17 +849,8 @@ async function handleWebSocketMessage(
 
   await touchChat(chat.id);
 
-  broadcastToRoom(chat.id, {
-    type: "chat_message",
-    role: "assistant",
-    chatId: chat.id,
-    messageId: assistantMessage.id,
-    userId: assistantUser.id,
-    message: assistantText,
-    content: assistantText,
-    attachments: [],
-    timestamp: assistantMessage.createdAt.toISOString(),
-  });
+  const assistantAttachments: WsAttachmentInput[] = [];
+  let assistantTextForBroadcast = assistantText;
 
   if (attachmentIntent.wantsAttachment && attachmentIntent.fileType) {
     if (attachmentIntent.isFollowUp && !previousAssistantMessage) {
@@ -885,6 +880,17 @@ async function handleWebSocketMessage(
         fileType: attachmentIntent.fileType,
       });
 
+      assistantAttachments.push({
+        name: attachment.name,
+        url: attachment.url,
+        type:
+          attachment.fileType === "excel"
+            ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            : "application/pdf",
+        size: attachment.size,
+      });
+      assistantTextForBroadcast = `${assistantText}\n\nDownload ${attachment.fileType.toUpperCase()}: ${attachment.url}`;
+
       sendEvent(ws, {
         type: "attachment",
         fileType: attachment.fileType,
@@ -898,6 +904,9 @@ async function handleWebSocketMessage(
     } catch (error) {
       const reason =
         error instanceof Error ? error.message : "Attachment generation failed.";
+      console.error(
+        `[ATTACHMENT ERROR] chatId=${chat.id} messageId=${assistantMessage.id} fileType=${attachmentIntent.fileType}: ${reason}`
+      );
       sendEvent(ws, {
         type: "error",
         message: reason,
@@ -906,17 +915,29 @@ async function handleWebSocketMessage(
     }
   }
 
+  broadcastToRoom(chat.id, {
+    type: "chat_message",
+    role: "assistant",
+    chatId: chat.id,
+    messageId: assistantMessage.id,
+    userId: assistantUser.id,
+    message: assistantTextForBroadcast,
+    content: assistantTextForBroadcast,
+    attachments: assistantAttachments,
+    timestamp: assistantMessage.createdAt.toISOString(),
+  });
+
  // ================= OPTIONAL SQL DATA =================
-  if (parsed?.type === "query_result") {
-    ws.send(
-      JSON.stringify({
-        type: "query_data",
-        chatId: chat.id,
-        userId: assistantUser.id,
-        data: parsed.data,
-      })
-    );
-  }
+  // if (parsed?.type === "query_result") {
+  //   ws.send(
+  //     JSON.stringify({
+  //       type: "query_data",
+  //       chatId: chat.id,
+  //       userId: assistantUser.id,
+  //       data: parsed.data,
+  //     })
+  //   );
+  // }
 }
 
 await ensureDatabaseSchema();
@@ -933,8 +954,8 @@ const server = Bun.serve<WsData>({
 
     if (pathname === "/ws") {
       const forwardedFor = req.headers.get("x-forwarded-for");
-      const ip = forwardedFor?.split(",")[0]?.trim() || undefined;
-      const userAgent = req.headers.get("user-agent") || undefined;
+      const ip = forwardedFor?.split(",")[0]?.trim();
+      const userAgent = req.headers.get("user-agent")?.trim();
 
       const success = server.upgrade(req, {
         data: {

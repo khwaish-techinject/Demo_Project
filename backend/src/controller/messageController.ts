@@ -182,7 +182,7 @@ function normalizeOptionalQueryValue(value: string | null) {
   const normalized = value?.trim();
 
   if (!normalized || normalized === "undefined" || normalized === "null") {
-    return undefined;
+    return;
   }
 
   return normalized;

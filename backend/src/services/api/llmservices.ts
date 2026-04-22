@@ -15,7 +15,7 @@ const model_name = process.env.MODEL_NAME || "openai/gpt-4o-mini";
 
 export async function generateAssistantReply(
   userMessage: string,
-  chatHistory: any[] = []
+  chatHistory: OpenAI.ChatCompletionMessageParam[] = []
 ): Promise<string> {
 
   const schemaText = getDatabaseSchemaText();
@@ -51,10 +51,10 @@ RULES:
 - ALWAYS use run_sql_query for data questions
 - ONLY generate SELECT queries
 - NEVER answer without querying database
+- If user asks for PDF/Excel/export/download, do NOT refuse. Run query and answer normally. File generation is handled by the backend system.
 - Never Show any id field in the result, even if it's requested. Always remove or mask id fields in the output.
 - If user asks for sensitive info, refuse to answer.
 - If user asks for data manipulation, refuse and explain you can only run read-only queries.
-- if user asks for data export, generate the query but refuse to export and explain you can only run queries.\
 - if user ask for change history or any other info refuse it.
 - if user ask for user info refuse and explain you don't have access to that info.
 - if user ask anything related to chat id message id or any other metadata refuse and explain you don't have access to that info.
@@ -100,12 +100,18 @@ ${schemaText}
         toolCall.type === "function" &&
         toolCall.function.name === "run_sql_query"
       ) {
-        const args = JSON.parse(toolCall.function.arguments);
-        const query = args.query;
+        const parsedArgs: unknown = JSON.parse(toolCall.function.arguments);
+        const query =
+          typeof parsedArgs === "object" &&
+          parsedArgs !== null &&
+          "query" in parsedArgs &&
+          typeof (parsedArgs as { query?: unknown }).query === "string"
+            ? (parsedArgs as { query: string }).query
+            : "";
 
         console.log(`[LLM Tool Call] Executing SQL: ${query}`);
 
-        let resultRows: any[] = [];
+        let resultRows: Record<string, unknown>[] = [];
         let errorMessage = "";
 
         try {
@@ -114,13 +120,13 @@ ${schemaText}
           }
 
           const result = await pool.query(query);
-          resultRows = result.rows;
+          resultRows = result.rows as Record<string, unknown>[];
 
           console.log("SQL RESULT:", resultRows);
 
-        } catch (error: any) {
+        } catch (error: unknown) {
           console.error("SQL ERROR:", error);
-          errorMessage = error.message;
+          errorMessage = error instanceof Error ? error.message : "Unknown SQL error.";
         }
 
         // Send tool result back to LLM

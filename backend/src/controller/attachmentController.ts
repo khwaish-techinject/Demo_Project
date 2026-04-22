@@ -108,7 +108,7 @@ export async function updateAttachment(attachmentId: string, req: Request) {
     name: body.name,
     url: body.url,
     type: body.type,
-    size: body.size !== undefined ? Number(body.size) : undefined,
+    ...(body.size !== null && body.size !== "" ? { size: Number(body.size) } : {}),
   };
 
   const [attachment] = await db
@@ -139,7 +139,7 @@ export async function deleteAttachment(attachmentId: string) {
 
 export async function createAttachmentsForMessage(
   messageId: string,
-  files: AttachmentInput[] | undefined
+  files?: AttachmentInput[]
 ) {
   if (!files?.length) {
     return [];

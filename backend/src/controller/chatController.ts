@@ -7,27 +7,31 @@ function badRequest(message: string) {
   return Response.json({ error: message }, { status: 400 });
 }
 
-function normalizeOptionalText(value: string | null | undefined) {
+function normalizeOptionalText(value?: string | null) {
   const normalized = value?.trim();
 
   if (!normalized || normalized === "undefined" || normalized === "null") {
-    return undefined;
+    return;
   }
 
   return normalized;
 }
 
-function normalizeOptionalUuid(value: string | null | undefined) {
+function normalizeOptionalUuid(value?: string | null) {
   const normalized = normalizeOptionalText(value);
 
   if (!normalized) {
-    return undefined;
+    return;
   }
 
   const uuidPattern =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-  return uuidPattern.test(normalized) ? normalized : undefined;
+  if (uuidPattern.test(normalized)) {
+    return normalized;
+  }
+
+  return;
 }
 
 export async function listChats(req: Request) {

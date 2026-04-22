@@ -35,12 +35,12 @@ async function main() {
 main()
   .catch(async (error) => {
     console.error("Failed to start MCP server:", error);
-    await pool.end().catch(() => undefined);
+    await pool.end().catch(() => {});
     process.exit(1);
   })
   .finally(async () => {
     const close = async () => {
-      await pool.end().catch(() => undefined);
+      await pool.end().catch(() => {});
       process.exit(0);
     };
 
