@@ -15,6 +15,11 @@ import {  createUser,  deleteUser,  findOrCreateUser,  getUserById,  listUsers, 
 } from "./controller/userController";
 
 import { ensureDatabaseSchema } from "./db/db";
+import {
+  detectAttachmentIntent,
+  generateAndStoreAttachment,
+  getLatestAssistantMessage,
+} from "./services/api/attachmentService";
 import { generateAssistantReply } from "./services/api/llmservices";
 
 type WsAttachmentInput = {
@@ -88,6 +93,16 @@ type ChatEvent =
       type: "error";
       message: string;
       timestamp: string;
+    }
+  | {
+      type: "attachment";
+      fileType: "pdf" | "excel";
+      url: string;
+      messageId: string;
+      chatId: string;
+      name: string;
+      size: number;
+      reused?: boolean;
     };
 
 const ASSISTANT_USER_NAME = "DataPilot AI";
@@ -792,6 +807,14 @@ async function handleWebSocketMessage(
   const assistantUser = await findOrCreateUser({
     name: ASSISTANT_USER_NAME,
   });
+  const attachmentIntent = detectAttachmentIntent(content);
+  const previousAssistantMessage =
+    attachmentIntent.wantsAttachment && attachmentIntent.isFollowUp
+      ? await getLatestAssistantMessage({
+          chatId: chat.id,
+          assistantUserId: assistantUser.id,
+        })
+      : null;
 
   const raw = await generateAssistantReply(content);
 
@@ -834,17 +857,66 @@ async function handleWebSocketMessage(
     timestamp: assistantMessage.createdAt.toISOString(),
   });
 
-  // ================= OPTIONAL SQL DATA =================
-  // if (parsed?.type === "query_result") {
-  //   ws.send(
-  //     JSON.stringify({
-  //       type: "query_data",
-  //       chatId: chat.id,
-  //       userId: assistantUser.id,
-  //       data: parsed.data,
-  //     })
-  //   );
-  // }
+  if (attachmentIntent.wantsAttachment && attachmentIntent.fileType) {
+    if (attachmentIntent.isFollowUp && !previousAssistantMessage) {
+      sendEvent(ws, {
+        type: "error",
+        message: "No previous assistant message found to convert.",
+        timestamp: now(),
+      });
+      return;
+    }
+
+    const sourceMessageId = attachmentIntent.isFollowUp
+      ? previousAssistantMessage!.id
+      : assistantMessage.id;
+    const sourceContent = attachmentIntent.isFollowUp
+      ? previousAssistantMessage!.content
+      : parsed?.type === "query_result"
+      ? raw
+      : assistantText;
+
+    try {
+      const attachment = await generateAndStoreAttachment({
+        chatId: chat.id,
+        targetMessageId: assistantMessage.id,
+        sourceMessageId,
+        sourceContent,
+        fileType: attachmentIntent.fileType,
+      });
+
+      sendEvent(ws, {
+        type: "attachment",
+        fileType: attachment.fileType,
+        url: attachment.url,
+        messageId: attachment.messageId,
+        chatId: attachment.chatId,
+        name: attachment.name,
+        size: attachment.size,
+        reused: attachment.reused,
+      });
+    } catch (error) {
+      const reason =
+        error instanceof Error ? error.message : "Attachment generation failed.";
+      sendEvent(ws, {
+        type: "error",
+        message: reason,
+        timestamp: now(),
+      });
+    }
+  }
+
+ // ================= OPTIONAL SQL DATA =================
+  if (parsed?.type === "query_result") {
+    ws.send(
+      JSON.stringify({
+        type: "query_data",
+        chatId: chat.id,
+        userId: assistantUser.id,
+        data: parsed.data,
+      })
+    );
+  }
 }
 
 await ensureDatabaseSchema();
@@ -993,7 +1065,7 @@ const server = Bun.serve<WsData>({
       const attachmentId = getIdFromPath(pathname);
 
       if (req.method === "GET") {
-        return getAttachmentById(attachmentId);
+        return getAttachmentById(attachmentId, req);
       }
 
       if (req.method === "PATCH" || req.method === "PUT") {

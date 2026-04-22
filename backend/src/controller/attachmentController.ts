@@ -1,7 +1,7 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 
 import { db } from "../db/db";
-import { attachments } from "../db/schema";
+import { attachments, chats, messages } from "../db/schema";
 
 type AttachmentInput = {
   name: string;
@@ -17,23 +17,57 @@ function badRequest(message: string) {
 export async function listAttachments(req: Request) {
   const url = new URL(req.url);
   const messageId = url.searchParams.get("messageId");
+  const createdBy = url.searchParams.get("createdBy");
 
-  const rows = messageId
-    ? await db
-        .select()
-        .from(attachments)
-        .where(eq(attachments.messageId, messageId))
-        .orderBy(asc(attachments.createdAt))
-    : await db.select().from(attachments).orderBy(asc(attachments.createdAt));
+  if (!createdBy) {
+    return badRequest("createdBy is required.");
+  }
+
+  const rows = await db
+    .select({
+      id: attachments.id,
+      messageId: attachments.messageId,
+      name: attachments.name,
+      url: attachments.url,
+      type: attachments.type,
+      size: attachments.size,
+      createdAt: attachments.createdAt,
+    })
+    .from(attachments)
+    .innerJoin(messages, eq(messages.id, attachments.messageId))
+    .innerJoin(chats, eq(chats.id, messages.chatId))
+    .where(
+      messageId
+        ? and(eq(chats.createdBy, createdBy), eq(attachments.messageId, messageId))
+        : eq(chats.createdBy, createdBy)
+    )
+    .orderBy(asc(attachments.createdAt));
 
   return Response.json(rows);
 }
 
-export async function getAttachmentById(attachmentId: string) {
+export async function getAttachmentById(attachmentId: string, req: Request) {
+  const url = new URL(req.url);
+  const createdBy = url.searchParams.get("createdBy");
+
+  if (!createdBy) {
+    return badRequest("createdBy is required.");
+  }
+
   const [attachment] = await db
-    .select()
+    .select({
+      id: attachments.id,
+      messageId: attachments.messageId,
+      name: attachments.name,
+      url: attachments.url,
+      type: attachments.type,
+      size: attachments.size,
+      createdAt: attachments.createdAt,
+    })
     .from(attachments)
-    .where(eq(attachments.id, attachmentId));
+    .innerJoin(messages, eq(messages.id, attachments.messageId))
+    .innerJoin(chats, eq(chats.id, messages.chatId))
+    .where(and(eq(attachments.id, attachmentId), eq(chats.createdBy, createdBy)));
 
   if (!attachment) {
     return Response.json({ error: "Attachment not found." }, { status: 404 });
