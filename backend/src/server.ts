@@ -9,6 +9,7 @@ import {  createChat,  deleteChat,  ensureChat,  getChatById,  listChats,  touch
 } from "./controller/chatController";
 
 import {  createMessage,  createMessageRecord,  deleteMessage,  getMessageById,  listMessages,  updateMessage,
+  parsePageApi,
 } from "./controller/messageController";
 
 import {  createUser,  deleteUser,  findOrCreateUser,  getUserById,  listUsers,  updateUser,
@@ -328,6 +329,7 @@ function isChatApiPath(pathname: string) {
   return (
     pathname === "/api/chats" ||
     pathname.startsWith("/api/chats/") ||
+    pathname === "/api/parsepage" ||
     pathname === "/api/messages" ||
     pathname.startsWith("/api/messages/")
   );
@@ -752,6 +754,11 @@ const server = Bun.serve<WsData>({
 
     if (req.method === "GET" && pathname === "/api/messages") {
       const response = await listMessages(req);
+      return addChatCorsHeaders(response, requestOrigin);
+    }
+
+    if (req.method === "GET" && pathname === "/api/parsepage") {
+      const response = await parsePageApi(req);
       return addChatCorsHeaders(response, requestOrigin);
     }
 

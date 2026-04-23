@@ -30,6 +30,13 @@ function parsePage(value: string | null) {
   return parsed;
 }
 
+export async function parsePageApi(req: Request) {
+  const url = new URL(req.url);
+  const page = parsePage(url.searchParams.get("page"));
+
+  return Response.json({ page });
+}
+
 export async function listMessages(req: Request) {
   const url = new URL(req.url);
   const chatId = normalizeOptionalQueryValue(url.searchParams.get("chatId"));
