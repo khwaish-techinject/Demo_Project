@@ -107,7 +107,7 @@ type ChatEvent =
 
 const ASSISTANT_USER_NAME = "DataPilot AI";
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN ?? "http://localhost:3000";
-const CHAT_CORS_METHODS = "GET, OPTIONS";
+const CHAT_CORS_METHODS = "GET, POST, PATCH, PUT, DELETE, OPTIONS";
 const CHAT_CORS_HEADERS = "Content-Type, Authorization";
 
 const chatRooms = new Map<string, Set<ServerWebSocket<unknown>>>();
@@ -248,6 +248,29 @@ function broadcastToRoom(chatId: string, event: ChatEvent) {
   return recipients;
 }
 
+function removeChatRoom(chatId: string) {
+  const room = chatRooms.get(chatId);
+  if (!room) {
+    return 0;
+  }
+
+  for (const ws of room) {
+    const roomsForSocket = socketRooms.get(ws);
+    if (!roomsForSocket) {
+      continue;
+    }
+
+    roomsForSocket.delete(chatId);
+    if (roomsForSocket.size === 0) {
+      socketRooms.delete(ws);
+    }
+  }
+
+  const size = room.size;
+  chatRooms.delete(chatId);
+  return size;
+}
+
 function normalizeAttachments(value: unknown): WsAttachmentInput[] {
   if (!Array.isArray(value)) {
     return [];
@@ -316,365 +339,6 @@ function addChatCorsHeaders(response: Response, origin: string | null) {
   response.headers.set("Vary", "Origin");
   return response;
 }
-//--------------------------------------------------------------------------------------------------------------------------------------------------
-// async function handleWebSocketMessage(
-//   ws: ServerWebSocket<unknown>,
-//   rawMessage: string
-// ) {
-//   const payload = parseIncomingMessage(rawMessage);
-//   const payloadType = firstDefinedText(payload.type, payload.data?.type);
-//   if (payloadType === "join") {
-//   const chatId = firstDefinedText(
-//     payload.chatId,
-//     payload.chat_id,
-//     payload.data?.chatId,
-//     payload.data?.chat_id
-//   );
-
-//   if (!chatId) {
-//     sendEvent(ws, {
-//       type: "error",
-//       message: "chatId is required for join.",
-//       timestamp: now(),
-//     });
-//     return;
-//   }
-
-//   addSocketToRoom(ws, chatId);
-
-//   const meta = getWsMeta(ws);
-//   console.log(
-//     `[WS JOIN] id=${meta.connectionId} chatId=${chatId} roomSize=${getRoomSize(chatId)}`
-//   );
-
-//   //  FIX: confirm join (important for frontend sync)
-//   sendEvent(ws, {
-//     type: "joined",
-//     chatId,
-//   });
-
-//   return;
-// }
-//   // if (payloadType === "join") {
-//   //   const chatId = firstDefinedText(
-//   //     payload.chatId,
-//   //     payload.chat_id,
-//   //     payload.data?.chatId,
-//   //     payload.data?.chat_id
-//   //   );
-
-//   //   if (!chatId) {
-//   //     sendEvent(ws, {
-//   //       type: "error",
-//   //       message: "chatId is required for join.",
-//   //       timestamp: now(),
-//   //     });
-//   //     return;
-//   //   }
-
-//   //   addSocketToRoom(ws, chatId);
-//   //   const meta = getWsMeta(ws);
-//   //   console.log(
-//   //     `[WS JOIN] id=${meta.connectionId} chatId=${chatId} roomSize=${getRoomSize(chatId)}`
-//   //   );
-//   //   return;
-//   // }
-
-//   //if (payloadType === "chat_message" || payloadType === "message") {
-//   if (payloadType === "chat_message") {
-//     const chatId = firstDefinedText(
-//       payload.chatId,
-//       payload.chat_id,
-//       payload.data?.chatId,
-//       payload.data?.chat_id
-//     );
-//     const content = firstDefinedText(
-//       payload.content,
-//       payload.message,
-//       payload.text,
-//       payload.prompt,
-//       payload.data?.content,
-//       payload.data?.message,
-//       payload.data?.text,
-//       payload.data?.prompt
-//     );
-
-//     if (!chatId) {
-//       sendEvent(ws, {
-//         type: "error",
-//         message: "chatId is required for message.",
-//         timestamp: now(),
-//       });
-//       return;
-//     }
-
-//     if (!content) {
-//       sendEvent(ws, {
-//         type: "error",
-//         message: "content is required for message.",
-//         timestamp: now(),
-//       });
-//       return;
-//     }
-//     // AUTO JOIN FIX (handles missed join + race condition)
-//     if (!isSocketInRoom(ws, chatId)) {
-//       addSocketToRoom(ws, chatId);
-
-//       const meta = getWsMeta(ws);
-//       console.log(
-//     `[AUTO JOIN] id=${meta.connectionId} chatId=${chatId} roomSize=${getRoomSize(chatId)}`
-//   );
-// }
-//     //  AUTO JOIN FIX (critical)
-//     // if (!isSocketInRoom(ws, chatId)) {
-//     //   addSocketToRoom(ws, chatId);
-
-//     //   const meta = getWsMeta(ws);
-//     //   console.log(`[AUTO JOIN] id=${meta.connectionId} chatId=${chatId} roomSize=${getRoomSize(chatId)}`);
-//     // }
-//     // if (!isSocketInRoom(ws, chatId)) {
-//     //   sendEvent(ws, {
-//     //     type: "error",
-//     //     message: "Socket must join the chat room before sending messages.",
-//     //     timestamp: now(),
-//     //   });
-//     //   return;
-//     // }
-
-//     let timestamp = now();
-//     let senderId: string | undefined;
-//     let messageId = crypto.randomUUID();
-
-//     try {
-//       const userId = normalizeOptionalUuid(
-//         payload.userId ??
-//           payload.user_id ??
-//           payload.data?.userId ??
-//           payload.data?.user_id
-//       );
-//       const userName =
-//         firstDefinedText(
-//           payload.userName,
-//           payload.user_name,
-//           payload.data?.userName,
-//           payload.data?.user_name
-//         ) || "Guest";
-//       const title =
-//         firstDefinedText(payload.title, payload.data?.title) || content.slice(0, 60);
-//       const chatIdForDb = normalizeOptionalUuid(chatId);
-
-//       if (chatIdForDb) {
-//         const user = await findOrCreateUser({
-//           id: userId,
-//           name: userName,
-//         });
-//         const chat = await ensureChat({
-//           chatId: chatIdForDb,
-//           createdBy: user.id,
-//           title,
-//         });
-//         const storedMessage = await createMessageRecord({
-//           chatId: chat.id,
-//           userId: user.id,
-//           content,
-//         });
-
-//         await touchChat(chat.id);
-//         senderId = user.id;
-//         messageId = storedMessage.id as `${string}-${string}-${string}-${string}-${string}`;
-//         timestamp = storedMessage.createdAt.toISOString();
-//       } else {
-//         senderId = userId;
-//       }
-//     } catch (error) {
-//       const meta = getWsMeta(ws);
-//       console.error(
-//         `[WS MESSAGE SAVE ERROR] id=${meta.connectionId} chatId=${chatId}:`,
-//         error
-//       );
-//     }
-
-//     const event: ChatEvent = {
-//       type: "chat_message",
-//       role: "user",
-//       chatId,
-//       messageId,
-//       userId: (senderId ??
-//         crypto.randomUUID()) as `${string}-${string}-${string}-${string}-${string}`,
-//       message: content,
-//       content,
-//       attachments: [],
-//       timestamp,
-//     };
-//     //  ensure socket is definitely in room before broadcast
-//     if (!isSocketInRoom(ws, chatId)) {
-//       addSocketToRoom(ws, chatId);
-//     }
-//     const recipients = broadcastToRoom(chatId, event);
-//     const meta = getWsMeta(ws);
-//     console.log(
-//       `[WS BROADCAST] id=${meta.connectionId} chatId=${chatId} recipients=${recipients} roomSize=${getRoomSize(chatId)}`
-//     );
-//     return;
-//   }
-
-//   const content = firstDefinedText(
-//     payload.content,
-//     payload.message,
-//     payload.text,
-//     payload.prompt,
-//     payload.data?.content,
-//     payload.data?.message,
-//     payload.data?.text,
-//     payload.data?.prompt
-//   );
-
-//   if (!content) {
-//     sendEvent(ws, {
-//       type: "error",
-//       message: "content or message is required.",
-//       timestamp: now(),
-//     });
-//     return;
-//   }
-
-//   const userId = normalizeOptionalUuid(
-//     payload.userId ?? payload.user_id ?? payload.data?.userId ?? payload.data?.user_id
-//   );
-//   const userName =
-//     firstDefinedText(
-//       payload.userName,
-//       payload.user_name,
-//       payload.data?.userName,
-//       payload.data?.user_name
-//     ) || "Guest";
-//   const chatId = normalizeOptionalUuid(
-//     payload.chatId ?? payload.chat_id ?? payload.data?.chatId ?? payload.data?.chat_id
-//   );
-//   const title =
-//     firstDefinedText(payload.title, payload.data?.title) || content.slice(0, 60);
-//   const normalizedAttachments = normalizeAttachments(
-//     payload.attachments ?? payload.data?.attachments
-//   );
-
-//   const user = await findOrCreateUser({
-//     id: userId,
-//     name: userName,
-//   });
-
-//   const chat = await ensureChat({
-//     chatId,
-//     createdBy: user.id,
-//     title,
-//   });
-
-//   // Ensure the current connection is subscribed to this chat room before broadcasts.
-//   if (!isSocketInRoom(ws, chat.id)) {
-//     addSocketToRoom(ws, chat.id);
-//   }
-
-//   const userMessage = await createMessageRecord({
-//     chatId: chat.id,
-//     userId: user.id,
-//     content,
-//   });
-
-//   await createAttachmentsForMessage(userMessage.id, normalizedAttachments);
-
-//   await touchChat(chat.id);
-
-//   const userMessageEvent: ChatEvent = {
-//     type: "chat_message",
-//     role: "user",
-//     chatId: chat.id,
-//     messageId: userMessage.id,
-//     userId: user.id,
-//     message: userMessage.content,
-//     content: userMessage.content,
-//     attachments: normalizedAttachments,
-//     timestamp: userMessage.createdAt.toISOString(),
-//   };
-//   broadcastToRoom(chat.id, userMessageEvent);
-
-//   sendEvent(ws, {
-//     type: "chat_context",
-//     chatId: chat.id,
-//     userId: user.id,
-//     title: chat.title,
-//   });
-
-//   const assistantUser = await findOrCreateUser({
-//     name: ASSISTANT_USER_NAME,
-//   });
-
-//   //const assistantMessageContent = await generateAssistantReply(content);
-//   const raw = await generateAssistantReply(content);
-
-//   let parsed;
-//   try {
-//     parsed = JSON.parse(raw);
-//   }
-//   catch {
-//     parsed = null;
-//   }
-//   //const assistantMessageContent = buildAssistantReply(content);
-
-//   // const assistantMessage = await createMessageRecord({
-//   //   chatId: chat.id,
-//   //   userId: assistantUser.id,
-//   //   content: assistantMessageContent,
-//   // });
-//   let assistantText = raw;
-
-//   if (parsed?.type === "query_result") {
-//     assistantText = parsed.text;
-//   }
-//   // save correct message in DB
-//   const assistantMessage = await createMessageRecord({
-//     chatId: chat.id,
-//     userId: assistantUser.id,
-//     content: assistantText,
-//   });
-//   await touchChat(chat.id);
-
-//   // sendEvent(ws, {
-//   //   type: "chat_message",
-//   //   role: "assistant",
-//   //   chatId: chat.id,
-//   //   messageId: assistantMessage.id,
-//   //   userId: assistantUser.id,
-//   //   message: assistantMessage.content,
-//   //   content: assistantMessage.content,
-//   //   attachments: [],
-//   //   timestamp: assistantMessage.createdAt.toISOString(),
-//   // });
-//   const assistantMessageEvent: ChatEvent = {
-//     type: "chat_message",
-//     role: "assistant",
-//     chatId: chat.id,
-//     messageId: assistantMessage.id,
-//     userId: assistantUser.id,
-//     message: assistantText,
-//     content: assistantText,
-//     attachments: [],
-//     timestamp: assistantMessage.createdAt.toISOString(),
-//   };
-//   broadcastToRoom(chat.id, assistantMessageEvent);
-
-//   if (parsed?.type === "query_result") {
-//   ws.send(JSON.stringify({
-//     type: "query_data",
-//     chatId: chat.id,
-//     userId: assistantUser.id,
-//     data: parsed.data
-// }));
-//   // ws.send(JSON.stringify({
-//   //   type: "query_data",
-//   //   data: parsed.data
-//   // }));
-// }
-// }
-//--------------------------------------------------------------------------------------------------------------------------------------------------------
 async function handleWebSocketMessage(
   ws: ServerWebSocket<unknown>,
   rawMessage: string
@@ -1022,6 +686,30 @@ const server = Bun.serve<WsData>({
       return addChatCorsHeaders(response, requestOrigin);
     }
 
+    if (req.method === "DELETE" && pathname === "/api/chats") {
+      const chatIdFromQuery = normalizeOptionalUuid(
+        new URL(req.url).searchParams.get("chatId")
+      );
+
+      if (!chatIdFromQuery) {
+        const response = jsonResponse(
+          {
+            status: "error",
+            success: false,
+            message: "chatId query param is required for this endpoint.",
+          },
+          { status: 400 }
+        );
+        return addChatCorsHeaders(response, requestOrigin);
+      }
+
+      const response = await deleteChat(chatIdFromQuery, req);
+      if (response.ok) {
+        removeChatRoom(chatIdFromQuery);
+      }
+      return addChatCorsHeaders(response, requestOrigin);
+    }
+
     if (pathname.startsWith("/api/chats/")) {
       const chatId = getIdFromPath(pathname);
 
@@ -1036,7 +724,10 @@ const server = Bun.serve<WsData>({
       }
 
       if (req.method === "DELETE") {
-        const response = await deleteChat(chatId);
+        const response = await deleteChat(chatId, req);
+        if (response.ok) {
+          removeChatRoom(chatId);
+        }
         return addChatCorsHeaders(response, requestOrigin);
       }
     }

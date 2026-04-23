@@ -103,17 +103,54 @@ export async function updateChat(chatId: string, req: Request) {
   return Response.json(chat);
 }
 
-export async function deleteChat(chatId: string) {
-  const [chat] = await db
-    .delete(chats)
-    .where(eq(chats.id, chatId))
-    .returning();
+async function resolveCreatedByForDelete(req: Request) {
+  const url = new URL(req.url);
+  const createdByFromQuery = normalizeOptionalUuid(url.searchParams.get("createdBy"));
 
-  if (!chat) {
-    return Response.json({ error: "Chat not found." }, { status: 404 });
+  if (createdByFromQuery) {
+    return createdByFromQuery;
   }
 
-  return Response.json({ success: true, chat });
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return;
+  }
+
+  if (!body || typeof body !== "object") {
+    return;
+  }
+
+  const payload = body as { createdBy?: string; created_by?: string };
+  return normalizeOptionalUuid(payload.createdBy ?? payload.created_by);
+}
+
+export async function deleteChat(chatId: string, req: Request) {
+  const createdBy = await resolveCreatedByForDelete(req);
+  const whereClause = createdBy
+    ? and(eq(chats.id, chatId), eq(chats.createdBy, createdBy))
+    : eq(chats.id, chatId);
+
+  const [chat] = await db.delete(chats).where(whereClause).returning();
+
+  if (!chat) {
+    return Response.json(
+      {
+        status: "error",
+        success: false,
+        message: "Chat not found or already deleted.",
+      },
+      { status: 404 }
+    );
+  }
+
+  return Response.json({
+    status: "success",
+    success: true,
+    message: "Chat deleted successfully.",
+    chat,
+  });
 }
 
 export async function ensureChat(params: {
