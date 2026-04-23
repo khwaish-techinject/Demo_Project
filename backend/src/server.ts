@@ -107,6 +107,10 @@ type ChatEvent =
 
 const ASSISTANT_USER_NAME = "DataPilot AI";
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN ?? "http://localhost:3000";
+const FRONTEND_ORIGINS = FRONTEND_ORIGIN
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 const CHAT_CORS_METHODS = "GET, POST, PATCH, PUT, DELETE, OPTIONS";
 const CHAT_CORS_HEADERS = "Content-Type, Authorization";
 
@@ -321,11 +325,16 @@ function parseIncomingMessage(rawMessage: string): IncomingChatPayload {
 }
 
 function isChatApiPath(pathname: string) {
-  return pathname === "/api/chats" || pathname.startsWith("/api/chats/");
+  return (
+    pathname === "/api/chats" ||
+    pathname.startsWith("/api/chats/") ||
+    pathname === "/api/messages" ||
+    pathname.startsWith("/api/messages/")
+  );
 }
 
 function isAllowedFrontendOrigin(origin: string | null) {
-  return origin === FRONTEND_ORIGIN;
+  return !!origin && FRONTEND_ORIGINS.includes(origin);
 }
 
 function addChatCorsHeaders(response: Response, origin: string | null) {
@@ -742,26 +751,31 @@ const server = Bun.serve<WsData>({
     }
 
     if (req.method === "GET" && pathname === "/api/messages") {
-      return listMessages(req);
+      const response = await listMessages(req);
+      return addChatCorsHeaders(response, requestOrigin);
     }
 
     if (req.method === "POST" && pathname === "/api/messages") {
-      return createMessage(req);
+      const response = await createMessage(req);
+      return addChatCorsHeaders(response, requestOrigin);
     }
 
     if (pathname.startsWith("/api/messages/")) {
       const messageId = getIdFromPath(pathname);
 
       if (req.method === "GET") {
-        return getMessageById(messageId);
+        const response = await getMessageById(messageId);
+        return addChatCorsHeaders(response, requestOrigin);
       }
 
       if (req.method === "PATCH" || req.method === "PUT") {
-        return updateMessage(messageId, req);
+        const response = await updateMessage(messageId, req);
+        return addChatCorsHeaders(response, requestOrigin);
       }
 
       if (req.method === "DELETE") {
-        return deleteMessage(messageId);
+        const response = await deleteMessage(messageId);
+        return addChatCorsHeaders(response, requestOrigin);
       }
     }
 
